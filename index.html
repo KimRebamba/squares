@@ -29,6 +29,14 @@
   .panel-show i{display:block;width:10px;height:1px;background:rgba(255,255,255,0.5);border-radius:1px}
   .panel-show:hover i{background:rgba(255,255,255,0.85)}
   .hidden{display:none}
+  .custom-popup-backdrop{position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:40}
+  .custom-popup{position:fixed;z-index:41;left:50%;top:50%;transform:translate(-50%,-50%);width:260px;padding:12px 14px;background:rgba(0,0,0,0.9);border:1px solid #ffffff;border-radius:12px;color:#ffffff;font-family:sans-serif;font-size:12px;box-shadow:0 0 18px rgba(0,0,0,0.9)}
+  .custom-popup-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;font-weight:600;letter-spacing:0.05em;font-size:11px;text-transform:uppercase}
+  .custom-popup-colors{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+  .custom-popup-colors label{flex:1 1 45%;display:flex;flex-direction:column;gap:3px;font-size:11px}
+  .custom-popup-colors input[type="color"]{width:100%;height:24px;border-radius:999px;border:none;padding:0;background:transparent;cursor:pointer}
+  .custom-popup-footer{text-align:right;font-size:10px;opacity:0.8}
+  .custom-close-btn{padding:3px 10px;border-radius:999px;border:1px solid #ffffff;background:rgba(255,255,255,0.1);color:#ffffff;cursor:pointer;font-size:11px}
 </style>
 </head>
 <body>
@@ -43,6 +51,7 @@
     <button class="mood-btn" data-mood="warm">Warm</button>
     <button class="mood-btn" data-mood="neon">Neon</button>
     <button class="mood-btn" data-mood="party">Party</button>
+    <button class="mood-btn" data-mood="custom">Custom</button>
   </div>
   <div class="panel-row">
     <label class="file-label" id="fileLabel">
@@ -54,6 +63,27 @@
 </div>
 <div class="panel-show hidden" id="panelShow">
   <i></i><i></i><i></i>
+</div>
+<div class="custom-popup-backdrop hidden" id="customPopupBackdrop"></div>
+<div class="custom-popup hidden" id="customPopup">
+  <div class="custom-popup-header">
+    <span>Custom Colors</span>
+    <button id="customCloseBtn" class="custom-close-btn">Done</button>
+  </div>
+  <div class="custom-popup-colors">
+    <label>Color 1
+      <input type="color" class="custom-color-input" data-index="0">
+    </label>
+    <label>Color 2
+      <input type="color" class="custom-color-input" data-index="1">
+    </label>
+    <label>Color 3
+      <input type="color" class="custom-color-input" data-index="2">
+    </label>
+    <label>Color 4
+      <input type="color" class="custom-color-input" data-index="3">
+    </label>
+  </div>
 </div>
 <canvas id="c"></canvas>
 <script>
@@ -73,12 +103,16 @@ var sq_s  = new Float32Array(N);
 var sq_a  = new Float32Array(N);
 var sq_bs = new Float32Array(N);
 var sq_bd = new Uint8Array(N);
+var sq_group = new Uint8Array(N);
 
 var audioCtx = null, analyser = null, audioData = null;
 var audioAmp = 0, audioLow = 0, audioMid = 0, audioHigh = 0;
 var audioSource = null;
 
 var prevLow = 0, lastBeatTime = 0, beatIntensity = 0;
+
+var customColors = ['#ff4b4b','#ffd93d','#4b9dff','#b44bff'];
+var customColorsHsl = [];
 
 var MOODS = {
   chill: {hueMin:180, hueMax:220, alphaMin:0.18, alphaMax:0.32},
@@ -135,10 +169,28 @@ function init() {
     sq_s[i] = 10 + Math.random() * 18;
     sq_a[i] = 0.18 + Math.random() * 0.25;
     sq_bd[i] = i % 3;
+    sq_group[i] = i & 3;
   }
+  customColorsHsl = customColors.map(hexToHsl);
 }
 
 function applyMood(name) {
+  if (name === 'custom') {
+    currentMood = 'custom';
+    if (!customColorsHsl || customColorsHsl.length === 0) {
+      customColorsHsl = customColors.map(hexToHsl);
+    }
+    for (var i = 0; i < N; i++) {
+      var g = sq_group[i];
+      var base = customColorsHsl[g] || customColorsHsl[0];
+      var jitter = (Math.random() - 0.5) * 8;
+      sq_h[i] = base.h + jitter;
+      var alphaMin = 0.22;
+      var alphaMax = 0.42;
+      sq_a[i] = alphaMin + Math.random() * (alphaMax - alphaMin);
+    }
+    return;
+  }
   var m = MOODS[name];
   if (!m) return;
   currentMood = name;
@@ -146,6 +198,33 @@ function applyMood(name) {
     sq_h[i] = m.hueMin + Math.random() * (m.hueMax - m.hueMin);
     sq_a[i] = m.alphaMin + Math.random() * (m.alphaMax - m.alphaMin);
   }
+}
+
+function hexToHsl(hex) {
+  hex = hex.replace('#', '');
+  if (hex.length === 3) {
+    hex = hex[0] + hex[0] + hex[1] + hex[1] + hex[2] + hex[2];
+  }
+  var r = parseInt(hex.substring(0, 2), 16) / 255;
+  var g = parseInt(hex.substring(2, 4), 16) / 255;
+  var b = parseInt(hex.substring(4, 6), 16) / 255;
+
+  var max = Math.max(r, g, b), min = Math.min(r, g, b);
+  var h, s, l = (max + min) / 2;
+
+  if (max === min) {
+    h = s = 0;
+  } else {
+    var d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = (g - b) / d + (g < b ? 6 : 0); break;
+      case g: h = (b - r) / d + 2; break;
+      case b: h = (r - g) / d + 4; break;
+    }
+    h *= 60;
+  }
+  return { h: h || 0, s: s * 100, l: l * 100 };
 }
 
 var t0 = null;
@@ -327,8 +406,12 @@ var moodButtons = document.querySelectorAll('.mood-btn');
 if (moodButtons.length) {
   moodButtons.forEach(function(btn) {
     btn.addEventListener('click', function() {
-      applyMood(this.getAttribute('data-mood'));
+      var mood = this.getAttribute('data-mood');
+      applyMood(mood);
       moodButtons.forEach(function(b) { b.classList.toggle('active', b === btn); });
+      if (mood === 'custom') {
+        openCustomPopup();
+      }
     });
   });
 }
@@ -351,6 +434,47 @@ if (panelShow) {
     controlPanel.style.display = '';
     void controlPanel.offsetWidth;
     controlPanel.classList.remove('out');
+  });
+}
+
+var customPopup = document.getElementById('customPopup');
+var customPopupBackdrop = document.getElementById('customPopupBackdrop');
+var customCloseBtn = document.getElementById('customCloseBtn');
+var customColorInputs = document.querySelectorAll('.custom-color-input');
+
+function openCustomPopup() {
+  if (!customPopup || !customPopupBackdrop) return;
+  customPopup.classList.remove('hidden');
+  customPopupBackdrop.classList.remove('hidden');
+}
+
+function closeCustomPopup() {
+  if (!customPopup || !customPopupBackdrop) return;
+  customPopup.classList.add('hidden');
+  customPopupBackdrop.classList.add('hidden');
+}
+
+if (customCloseBtn) {
+  customCloseBtn.addEventListener('click', closeCustomPopup);
+}
+if (customPopupBackdrop) {
+  customPopupBackdrop.addEventListener('click', closeCustomPopup);
+}
+
+if (customColorInputs && customColorInputs.length) {
+  customColorInputs.forEach(function(input) {
+    var idx = parseInt(input.getAttribute('data-index'), 10) || 0;
+    if (customColors[idx]) {
+      input.value = customColors[idx];
+    }
+    input.addEventListener('input', function() {
+      var i = parseInt(this.getAttribute('data-index'), 10) || 0;
+      customColors[i] = this.value;
+      customColorsHsl[i] = hexToHsl(this.value);
+      if (currentMood === 'custom') {
+        applyMood('custom');
+      }
+    });
   });
 }
 
