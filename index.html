@@ -150,8 +150,18 @@ function setupAudioFromFile(file) {
 }
 
 function resize() {
-  W = c.width = innerWidth;
-  H = c.height = innerHeight;
+  var dpr = window.devicePixelRatio || 1;
+
+  W = innerWidth;
+  H = innerHeight;
+
+  c.width = Math.round(W * dpr);
+  c.height = Math.round(H * dpr);
+  c.style.width = W + 'px';
+  c.style.height = H + 'px';
+
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
   cx = W * 0.5;
   cy = H * 0.5;
 }
