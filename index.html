@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQUARES</title>
+<style>
+  *{margin:0;padding:0}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000000;cursor:auto}
+  canvas{display:block}
+  .control-panel{position:fixed;right:24px;bottom:24px;z-index:20;width:260px;padding:12px 14px;background:rgba(0,0,0,0.7);border:1px solid #ffffff;border-radius:12px;color:#ffffff;font-family:sans-serif;font-size:12px;box-shadow:0 0 18px rgba(0,0,0,0.8);transition:opacity .25s,transform .25s}
+  .control-panel.out{opacity:0;pointer-events:none;transform:translateY(8px)}
+  .panel-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+  .panel-title{font-weight:600;letter-spacing:0.06em;font-size:11px;text-transform:uppercase}
+  .panel-title span{font-weight:400;opacity:0.8;margin-left:4px;text-transform:none}
+  .panel-info{margin:0 0 8px;line-height:1.3;opacity:0.86}
+  .panel-row{display:flex;align-items:center;gap:6px;margin-bottom:6px;flex-wrap:wrap}
+  .mood-btn{flex:1 1 48%;padding:4px 6px;border-radius:999px;border:1px solid rgba(255,255,255,0.5);background:rgba(0,0,0,0.4);color:#ffffff;cursor:pointer;font-size:11px}
+  .mood-btn.active{background:#ffffff;color:#000000}
+  .file-label{flex:1;display:inline-flex;align-items:center;justify-content:center;padding:4px 6px;border-radius:999px;border:1px solid #ffffff;background:rgba(0,0,0,0.5);cursor:pointer;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;min-width:0}
+  .file-label span{pointer-events:none;overflow:hidden;text-overflow:ellipsis}
+  #audioFile{display:none}
+  .primary-btn{padding:4px 10px;border-radius:999px;border:1px solid #ffffff;background:rgba(255,255,255,0.1);color:#ffffff;cursor:pointer;font-size:11px}
+  .icon-button{width:20px;height:16px;border-radius:999px;border:1px solid rgba(255,255,255,0.6);background:transparent;cursor:pointer;position:relative;flex-shrink:0}
+  .icon-button.eye::before{content:"";position:absolute;inset:3px 4px;border-radius:999px;border:1px solid rgba(255,255,255,0.9)}
+  .icon-button.eye::after{content:"";position:absolute;width:4px;height:4px;border-radius:50%;background:#ffffff;top:50%;left:50%;transform:translate(-50%,-50%)}
+  .panel-show{position:fixed;right:24px;bottom:24px;z-index:25;width:30px;height:30px;border-radius:50%;border:1px solid rgba(255,255,255,0.25);background:rgba(0,0,0,0.45);cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;transition:border-color .2s}
+  .panel-show:hover{border-color:rgba(255,255,255,0.6)}
+  .panel-show i{display:block;width:10px;height:1px;background:rgba(255,255,255,0.5);border-radius:1px}
+  .panel-show:hover i{background:rgba(255,255,255,0.85)}
+  .hidden{display:none}
+</style>
+</head>
+<body>
+<div class="control-panel" id="controlPanel">
+  <div class="panel-header">
+    <div class="panel-title">SQUARES <span>by Kim</span></div>
+    <button id="infoToggle" class="icon-button eye" aria-label="Hide panel"></button>
+  </div>
+  <p class="panel-info">I made this website to have a visualizer. Stream the EP in Youtube :)</p>
+  <div class="panel-row">
+    <button class="mood-btn active" data-mood="chill">Chill</button>
+    <button class="mood-btn" data-mood="warm">Warm</button>
+    <button class="mood-btn" data-mood="neon">Neon</button>
+    <button class="mood-btn" data-mood="party">Party</button>
+  </div>
+  <div class="panel-row">
+    <label class="file-label" id="fileLabel">
+      <span id="fileName">Upload track</span>
+      <input id="audioFile" type="file" accept="audio/*">
+    </label>
+    <button id="pauseBtn" class="primary-btn">Pause</button>
+  </div>
+</div>
+<div class="panel-show hidden" id="panelShow">
+  <i></i><i></i><i></i>
+</div>
+<canvas id="c"></canvas>
+<script>
+var c = document.getElementById('c');
+var ctx = c.getContext('2d');
+
+var W, H, cx, cy;
+var N = 800;
+var LOOP = 10000;
+
+var sq_x  = new Float32Array(N);
+var sq_y  = new Float32Array(N);
+var sq_vx = new Float32Array(N);
+var sq_vy = new Float32Array(N);
+var sq_h  = new Float32Array(N);
+var sq_s  = new Float32Array(N);
+var sq_a  = new Float32Array(N);
+var sq_bs = new Float32Array(N);
+var sq_bd = new Uint8Array(N);
+
+var audioCtx = null, analyser = null, audioData = null;
+var audioAmp = 0, audioLow = 0, audioMid = 0, audioHigh = 0;
+var audioSource = null;
+
+var prevLow = 0, lastBeatTime = 0, beatIntensity = 0;
+
+var MOODS = {
+  chill: {hueMin:180, hueMax:220, alphaMin:0.18, alphaMax:0.32},
+  warm:  {hueMin:15,  hueMax:55,  alphaMin:0.20, alphaMax:0.36},
+  neon:  {hueMin:280, hueMax:330, alphaMin:0.22, alphaMax:0.40},
+  party: {hueMin:0,   hueMax:360, alphaMin:0.25, alphaMax:0.50}
+};
+var currentMood = 'chill';
+var isPaused = false;
+
+function setupAudioFromFile(file) {
+  if (!file) return;
+  if (!audioCtx) {
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    audioCtx = new AC();
+  }
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    audioCtx.decodeAudioData(e.target.result).then(function(buffer) {
+      if (audioSource) { try { audioSource.stop(0); } catch(_){} audioSource.disconnect(); }
+      var src = audioCtx.createBufferSource();
+      src.buffer = buffer;
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      audioData = new Uint8Array(analyser.frequencyBinCount);
+      src.connect(analyser);
+      analyser.connect(audioCtx.destination);
+      src.loop = true;
+      src.start(0);
+      audioSource = src;
+    }).catch(function(err) { console.error('Decode error:', err); });
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function resize() {
+  W = c.width = innerWidth;
+  H = c.height = innerHeight;
+  cx = W * 0.5;
+  cy = H * 0.5;
+}
+
+function init() {
+  resize();
+  for (var i = 0; i < N; i++) {
+    sq_x[i] = Math.random() * W;
+    sq_y[i] = Math.random() * H;
+    var ang = Math.random() * 6.2832;
+    var spd = 0.3 + Math.random() * 1.2;
+    sq_vx[i] = Math.cos(ang) * spd;
+    sq_vy[i] = Math.sin(ang) * spd;
+    sq_bs[i] = spd;
+    sq_s[i] = 10 + Math.random() * 18;
+    sq_a[i] = 0.18 + Math.random() * 0.25;
+    sq_bd[i] = i % 3;
+  }
+}
+
+function applyMood(name) {
+  var m = MOODS[name];
+  if (!m) return;
+  currentMood = name;
+  for (var i = 0; i < N; i++) {
+    sq_h[i] = m.hueMin + Math.random() * (m.hueMax - m.hueMin);
+    sq_a[i] = m.alphaMin + Math.random() * (m.alphaMax - m.alphaMin);
+  }
+}
+
+var t0 = null;
+
+function frame(ts) {
+  if (!t0) t0 = ts;
+  var t = ts - t0;
+  var L = (t % LOOP) / LOOP;
+
+  if (analyser && audioData) {
+    analyser.getByteFrequencyData(audioData);
+    var low = 0, mid = 0, high = 0, lC = 0, mC = 0, hC = 0;
+    var len = audioData.length;
+    for (var j = 0; j < len; j++) {
+      var v = audioData[j] / 255;
+      if (j < len * 0.12) { low += v; lC++; }
+      else if (j < len * 0.45) { mid += v; mC++; }
+      else if (j < len * 0.85) { high += v; hC++; }
+    }
+    low  = lC ? low / lC : 0;
+    mid  = mC ? mid / mC : 0;
+    high = hC ? high / hC : 0;
+    var sm = 0.82;
+    audioLow  = audioLow  * sm + low  * (1 - sm);
+    audioMid  = audioMid  * sm + mid  * (1 - sm);
+    audioHigh = audioHigh * sm + high * (1 - sm);
+    var energy = (low + mid + high) / 3;
+    audioAmp = audioAmp * sm + energy * (1 - sm);
+  } else {
+    audioAmp *= 0.92;
+    audioLow *= 0.92;
+    audioMid *= 0.92;
+    audioHigh *= 0.92;
+  }
+
+  var bassDelta = audioLow - prevLow;
+  if (bassDelta > 0.06 && audioLow > 0.22 && (t - lastBeatTime) > 160) {
+    lastBeatTime = t;
+    beatIntensity = 1.0;
+  }
+  prevLow = audioLow;
+  beatIntensity *= 0.86;
+
+  var trail = 0.055 + audioAmp * 0.14 + beatIntensity * 0.22;
+  ctx.fillStyle = 'rgba(0,0,0,' + trail.toFixed(3) + ')';
+  ctx.fillRect(0, 0, W, H);
+
+  if (beatIntensity > 0.35) {
+    ctx.fillStyle = 'rgba(255,255,255,' + (beatIntensity * 0.06).toFixed(3) + ')';
+    ctx.fillRect(0, 0, W, H);
+  }
+
+  var shimBase = L * 10;
+
+  ctx.save();
+
+  for (var i = 0; i < N; i++) {
+    if (beatIntensity > 0.04) {
+      var dx = sq_x[i] - cx;
+      var dy = sq_y[i] - cy;
+      var dist = Math.sqrt(dx * dx + dy * dy) || 1;
+      var push = beatIntensity * 2.0;
+      sq_vx[i] += (dx / dist) * push;
+      sq_vy[i] += (dy / dist) * push;
+    }
+
+    var curSpd = Math.sqrt(sq_vx[i] * sq_vx[i] + sq_vy[i] * sq_vy[i]);
+    var tgtSpd = sq_bs[i] * (1 + audioAmp * 0.7 + audioLow * 0.4);
+    if (curSpd > 0.001) {
+      var ratio = tgtSpd / curSpd;
+      var adj = 1 + (ratio - 1) * 0.025;
+      sq_vx[i] *= adj;
+      sq_vy[i] *= adj;
+    }
+
+    sq_x[i] += sq_vx[i];
+    sq_y[i] += sq_vy[i];
+
+    if (sq_x[i] < 0)  { sq_x[i] = 0;  sq_vx[i] =  Math.abs(sq_vx[i]); }
+    if (sq_x[i] > W)  { sq_x[i] = W;  sq_vx[i] = -Math.abs(sq_vx[i]); }
+    if (sq_y[i] < 0)  { sq_y[i] = 0;  sq_vy[i] =  Math.abs(sq_vy[i]); }
+    if (sq_y[i] > H)  { sq_y[i] = H;  sq_vy[i] = -Math.abs(sq_vy[i]); }
+
+    var localE;
+    if (sq_bd[i] === 0) localE = audioLow;
+    else if (sq_bd[i] === 1) localE = audioMid;
+    else localE = audioHigh;
+
+    var sizeMult = 1 + localE * 1.6 + beatIntensity * 2.8;
+    var size = sq_s[i] * sizeMult;
+    var half = size * 0.5;
+
+    var hueShift;
+    if (currentMood === 'party') {
+      // Fast color cycling + beat-driven flashes for party mode only
+      hueShift = audioMid * 120 + beatIntensity * 200 + (performance.now() * 0.05);
+    } else {
+      hueShift = audioMid * 55 + (sq_bd[i] === 1 ? audioMid * 35 : 0);
+    }
+    var hue = ((sq_h[i] + hueShift) % 360 + 360) % 360;
+
+    var lightness = 52;
+    if (sq_bd[i] === 2) lightness += audioHigh * 38;
+    else lightness += localE * 18;
+    lightness += beatIntensity * 35;
+    if (lightness > 96) lightness = 96;
+
+    var sat = 62 + audioAmp * 28 + beatIntensity * 18;
+    if (sat > 100) sat = 100;
+
+    var shimmer = 0.7 + 0.3 * Math.sin(shimBase + i * 0.0025);
+    var alp = sq_a[i] * shimmer + localE * 0.22 + beatIntensity * 0.38;
+    if (alp > 0.94) alp = 0.94;
+
+    var glow = 3 + localE * 35 + beatIntensity * 65;
+
+    var flashWhite = beatIntensity > 0.45 && (i % 5 === 0);
+
+    if (flashWhite) {
+      var fAlp = beatIntensity * 0.55;
+      ctx.shadowBlur = glow * 1.8;
+      ctx.shadowColor = 'rgba(255,255,255,' + (fAlp * 0.6).toFixed(2) + ')';
+      ctx.fillStyle = 'hsla(0,0%,100%,' + fAlp.toFixed(2) + ')';
+    } else {
+      ctx.shadowBlur = glow;
+      ctx.shadowColor = 'hsla(' + (hue | 0) + ',100%,70%,' + (alp * 0.65).toFixed(2) + ')';
+      ctx.fillStyle = 'hsla(' + (hue | 0) + ',' + (sat | 0) + '%,' + (lightness | 0) + '%,' + alp.toFixed(2) + ')';
+    }
+
+    ctx.fillRect(sq_x[i] - half, sq_y[i] - half, size, size);
+  }
+
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = 'transparent';
+  ctx.restore();
+
+  requestAnimationFrame(frame);
+}
+
+addEventListener('resize', resize);
+init();
+applyMood(currentMood);
+
+var fileInput = document.getElementById('audioFile');
+var fileNameEl = document.getElementById('fileName');
+if (fileInput) {
+  fileInput.addEventListener('change', function(e) {
+    var file = e.target.files[0];
+    if (!file) return;
+    var name = file.name;
+    if (name.length > 22) name = name.substring(0, 20) + '\u2026';
+    fileNameEl.textContent = name;
+    setupAudioFromFile(file);
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  });
+}
+
+var pauseBtn = document.getElementById('pauseBtn');
+if (pauseBtn) {
+  pauseBtn.addEventListener('click', function() {
+    if (!audioCtx) {
+      isPaused = !isPaused;
+      pauseBtn.textContent = isPaused ? 'Play' : 'Pause';
+      return;
+    }
+    if (!isPaused) {
+      audioCtx.suspend();
+      isPaused = true;
+      pauseBtn.textContent = 'Play';
+    } else {
+      audioCtx.resume();
+      isPaused = false;
+      pauseBtn.textContent = 'Pause';
+    }
+  });
+}
+
+var moodButtons = document.querySelectorAll('.mood-btn');
+if (moodButtons.length) {
+  moodButtons.forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      applyMood(this.getAttribute('data-mood'));
+      moodButtons.forEach(function(b) { b.classList.toggle('active', b === btn); });
+    });
+  });
+}
+
+var controlPanel = document.getElementById('controlPanel');
+var panelShow = document.getElementById('panelShow');
+var infoToggle = document.getElementById('infoToggle');
+if (infoToggle) {
+  infoToggle.addEventListener('click', function() {
+    controlPanel.classList.add('out');
+    setTimeout(function() {
+      controlPanel.style.display = 'none';
+      panelShow.classList.remove('hidden');
+    }, 260);
+  });
+}
+if (panelShow) {
+  panelShow.addEventListener('click', function() {
+    panelShow.classList.add('hidden');
+    controlPanel.style.display = '';
+    void controlPanel.offsetWidth;
+    controlPanel.classList.remove('out');
+  });
+}
+
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
